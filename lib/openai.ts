@@ -2,10 +2,21 @@ import OpenAI from 'openai';
 import type { AISummary, GeneratedReply, ReplyTone, EmailCategory, Priority } from '@/types';
 import { estimateReadingTime } from '@/lib/utils';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let client: OpenAI | null = null;
 
+// Built lazily (and cached) on first use, so a missing OPENAI_API_KEY
+// throws a clear, catchable error from inside the API route's try/catch
+// instead of crashing the whole module at import time.
 export function getOpenAI() {
-  return openai;
+  if (client) return client;
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('OpenAI is not configured: missing OPENAI_API_KEY environment variable.');
+  }
+
+  client = new OpenAI({ apiKey });
+  return client;
 }
 
 interface SummarizeOptions {
@@ -63,7 +74,7 @@ export async function summarizeEmail(
 - medium: بريد عادي
 - low: رسائل إعلامية أو تسويقية`;
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model,
     temperature,
     response_format: { type: 'json_object' },
@@ -110,7 +121,7 @@ export async function generateReply(
     detailed: 'comprehensive and detailed',
   };
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model,
     temperature,
     messages: [
@@ -140,7 +151,7 @@ export async function improveReply(
 ): Promise<string> {
   const model = options.model ?? process.env.OPENAI_DEFAULT_MODEL ?? 'gpt-4o';
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model,
     temperature: 0.5,
     messages: [
@@ -164,7 +175,7 @@ export async function translateToEnglish(
 ): Promise<string> {
   const model = options.model ?? process.env.OPENAI_DEFAULT_MODEL ?? 'gpt-4o';
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model,
     temperature: 0.3,
     messages: [
@@ -182,7 +193,7 @@ export async function translateToEnglish(
 export async function shortenText(text: string, options: SummarizeOptions = {}): Promise<string> {
   const model = options.model ?? process.env.OPENAI_DEFAULT_MODEL ?? 'gpt-4o';
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model,
     temperature: 0.3,
     messages: [
@@ -200,7 +211,7 @@ export async function shortenText(text: string, options: SummarizeOptions = {}):
 export async function expandText(text: string, options: SummarizeOptions = {}): Promise<string> {
   const model = options.model ?? process.env.OPENAI_DEFAULT_MODEL ?? 'gpt-4o';
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model,
     temperature: 0.5,
     messages: [
@@ -232,7 +243,7 @@ export async function generateDailySummary(
     .map((m) => `- ${m.title} ${m.time ? `الساعة ${m.time}` : ''}`)
     .join('\n');
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model,
     temperature: 0.4,
     messages: [
