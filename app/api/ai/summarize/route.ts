@@ -14,13 +14,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
 
-  // Return cached summary unless forced
-  if (!force) {
-    const cached = await getEmailSummary(messageId);
-    if (cached) return NextResponse.json(cached);
-  }
-
   try {
+    // Return cached summary unless forced. This used to run outside the
+    // try/catch below, so a Supabase failure here (missing table, bad
+    // credentials, etc.) crashed the route with an unhandled exception —
+    // the client would get a non-JSON 500 page and silently show "no
+    // summary yet" with no indication of what actually went wrong.
+    if (!force) {
+      const cached = await getEmailSummary(messageId);
+      if (cached) return NextResponse.json(cached);
+    }
+
     const settings = await getAISettings(session.user.email!);
 
     const summary = await summarizeEmail(
@@ -55,12 +59,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(saved);
   } catch (err: any) {
+    const message = err?.message || 'Unknown error while generating summary';
+    console.error('summarize_email error:', err);
     await saveLog({
       user_email: session.user.email!,
       action: 'summarize_email',
-      details: err.message,
+      details: message,
       status: 'error',
     });
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

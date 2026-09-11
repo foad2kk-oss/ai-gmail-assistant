@@ -1,17 +1,37 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-// Client-side Supabase client (uses anon key)
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Client-side Supabase client (uses anon key). Only constructed when both
+// public env vars are present so a missing var doesn't crash every page
+// that imports this module — callers still get a clear error if they try
+// to use it without configuration.
+export const supabase = (supabaseUrl && supabaseAnonKey
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null) as SupabaseClient;
 
-// Server-side admin client (uses service role key — never expose to browser)
+let adminClient: SupabaseClient | null = null;
+
+// Server-side admin client (uses service role key — never expose to browser).
+// Built lazily (and cached) on first use, so a missing/invalid env var
+// throws a clear, catchable error from inside the API route's try/catch
+// instead of crashing the whole module at import time with an opaque
+// "supabaseUrl is required" error.
 export function getSupabaseAdmin() {
-  return createClient(supabaseUrl, supabaseServiceKey, {
+  if (adminClient) return adminClient;
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceKey) {
+    throw new Error(
+      'Supabase is not configured: missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variable(s).'
+    );
+  }
+
+  adminClient = createClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+  return adminClient;
 }
 
 // ─── DB helpers ──────────────────────────────────────────────────────────────
@@ -82,9 +102,16 @@ export async function saveLog(log: {
   details: string;
   status: 'success' | 'error' | 'info';
 }) {
-  const admin = getSupabaseAdmin();
-  const { error } = await admin.from('logs').insert(log);
-  if (error) console.error('Log save error:', error);
+  // Logging must never be the reason a request fails — swallow any error
+  // (including Supabase being unconfigured) and just report it to the
+  // server console instead of throwing back into the caller's catch block.
+  try {
+    const admin = getSupabaseAdmin();
+    const { error } = await admin.from('logs').insert(log);
+    if (error) console.error('Log save error:', error);
+  } catch (err) {
+    console.error('Log save error:', err);
+  }
 }
 
 export async function getAISettings(userEmail: string) {
