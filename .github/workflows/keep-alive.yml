@@ -1,13 +1,16 @@
 name: Keep Supabase project active
 
-# Supabase auto-pauses free-tier projects after 7 days without real API
-# traffic. This workflow sends a lightweight authenticated read every few
-# days so the project (ai-gmail-assistant) stays active.
+# Supabase auto-pauses free-tier projects after 7 days without "real" API
+# activity. A plain authenticated SELECT wasn't reliably counted, so this
+# workflow does a real write (INSERT then DELETE) into the existing `logs`
+# table every few days so the project (ai-gmail-assistant) stays active.
 #
 # Setup required (one-time, in this repo's GitHub Settings > Secrets and
 # variables > Actions):
 #   SUPABASE_ANON_KEY  — the project's anon public key
 #                         (Supabase Dashboard > Project Settings > API)
+# Note: RLS is disabled on `logs` (see supabase/schema.sql), so the anon key
+# can insert/delete here without any extra policy setup.
 
 on:
   schedule:
@@ -18,10 +21,27 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase REST API
+      - name: Write + delete a heartbeat row in Supabase
         run: |
-          curl -sf --max-time 20 \
-            "https://sgsehpjgfgjwoquaupxi.supabase.co/rest/v1/ai_settings?select=id&limit=1" \
-            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -o /dev/null -w "status: %{http_code}\n"
+          set -e
+          BASE="https://sgsehpjgfgjwoquaupxi.supabase.co/rest/v1/logs"
+          AUTH_HEADERS=(-H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}")
+
+          echo "Inserting heartbeat log row..."
+          ID=$(curl -sf --max-time 20 -X POST "$BASE" \
+            "${AUTH_HEADERS[@]}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=representation" \
+            -d '{"user_email":"system@keepalive","action":"keep_alive_ping","details":"Automated GitHub Actions ping to prevent Supabase auto-pause","status":"info"}' \
+            | jq -r '.[0].id')
+
+          if [ -z "$ID" ] || [ "$ID" = "null" ]; then
+            echo "Insert failed to return an id — treating as failure."
+            exit 1
+          fi
+          echo "Inserted row: $ID"
+
+          echo "Deleting heartbeat row..."
+          curl -sf --max-time 20 -X DELETE "$BASE?id=eq.$ID" \
+            "${AUTH_HEADERS[@]}" \
+            -o /dev/null -w "delete status: %{http_code}\n"
