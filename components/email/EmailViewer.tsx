@@ -47,8 +47,10 @@ export function EmailViewer({ email, onClose, onUpdate }: EmailViewerProps) {
           force,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) {
+        throw new Error(data?.error || `فشل الطلب (${res.status})`);
+      }
       setSummary({
         messageId: data.message_id,
         summaryArabic: data.summary_arabic,
@@ -62,7 +64,8 @@ export function EmailViewer({ email, onClose, onUpdate }: EmailViewerProps) {
         generatedAt: data.created_at,
       });
     } catch (err: any) {
-      toast.error('فشل في إنشاء الملخص');
+      console.error('Summarize failed:', err);
+      toast.error(err?.message ? `فشل في إنشاء الملخص: ${err.message}` : 'فشل في إنشاء الملخص');
     } finally {
       setSummarizing(false);
     }
