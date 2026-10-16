@@ -3,7 +3,7 @@ name: Keep Supabase project active
 # Supabase auto-pauses free-tier projects after 7 days without "real" API
 # activity. A plain authenticated SELECT wasn't reliably counted, so this
 # workflow does a real write (INSERT then DELETE) into the existing `logs`
-# table every few days so the project (ai-gmail-assistant) stays active.
+# table daily so the project (ai-gmail-assistant) stays active.
 #
 # Setup required (one-time, in this repo's GitHub Settings > Secrets and
 # variables > Actions):
@@ -14,7 +14,7 @@ name: Keep Supabase project active
 
 on:
   schedule:
-    - cron: '17 6 */3 * *' # every 3 days at 06:17 UTC
+    - cron: '17 6 * * *' # daily at 06:17 UTC
   workflow_dispatch: {}
 
 jobs:
