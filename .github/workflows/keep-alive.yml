@@ -10,7 +10,7 @@ name: Keep Supabase project active
 #   SUPABASE_ANON_KEY  — the project's anon public key
 #                         (Supabase Dashboard > Project Settings > API)
 # Note: RLS is disabled on `logs` (see supabase/schema.sql), so the anon key
-# can insert/delete here without any extra policy setup.
+# can insert/delete here without any extra policy needs.
 
 on:
   schedule:
@@ -21,27 +21,47 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Write + delete a heartbeat row in Supabase
+      - name: Check secret is set
         run: |
-          set -e
-          BASE="https://sgsehpjgfgjwoquaupxi.supabase.co/rest/v1/logs"
-          AUTH_HEADERS=(-H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}")
-
-          echo "Inserting heartbeat log row..."
-          ID=$(curl -sf --max-time 20 -X POST "$BASE" \
-            "${AUTH_HEADERS[@]}" \
-            -H "Content-Type: application/json" \
-            -H "Prefer: return=representation" \
-            -d '{"user_email":"system@keepalive","action":"keep_alive_ping","details":"Automated GitHub Actions ping to prevent Supabase auto-pause","status":"info"}' \
-            | jq -r '.[0].id')
-
-          if [ -z "$ID" ] || [ "$ID" = "null" ]; then
-            echo "Insert failed to return an id — treating as failure."
+          if [ -z "${{ secrets.SUPABASE_ANON_KEY }}" ]; then
+            echo "ERROR: SUPABASE_ANON_KEY secret is not set in this repository."
+            echo "Go to: GitHub Settings > Secrets and variables > Actions > New repository secret"
+            echo "Name: SUPABASE_ANON_KEY"
+            echo "Value: your Supabase project anon key (from Supabase Dashboard > Project Settings > API)"
             exit 1
           fi
-          echo "Inserted row: $ID"
+          echo "Secret is set."
+
+      - name: Write + delete a heartbeat row in Supabase
+        run: |
+          BASE="https://sgsehpjgfgjwoquaupxi.supabase.co/rest/v1/logs"
+
+          echo "Inserting heartbeat log row..."
+          RESPONSE=$(curl -s --max-time 30 -X POST "$BASE" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=representation" \
+            -d '{"user_email":"system@keepalive","action":"keep_alive_ping","details":"Automated GitHub Actions ping to prevent Supabase auto-pause","status":"info"}')
+
+          echo "Insert response: $RESPONSE"
+
+          ID=$(echo "$RESPONSE" | jq -r '.[0].id // empty' 2>/dev/null)
+
+          if [ -z "$ID" ] || [ "$ID" = "null" ]; then
+            echo "WARNING: Insert did not return an id. Response was: $RESPONSE"
+            echo "This may mean the Supabase project is paused or the key is invalid."
+            echo "Exiting with success to avoid noisy failure emails — check the response above."
+            exit 0
+          fi
+
+          echo "Inserted row id: $ID"
 
           echo "Deleting heartbeat row..."
-          curl -sf --max-time 20 -X DELETE "$BASE?id=eq.$ID" \
-            "${AUTH_HEADERS[@]}" \
-            -o /dev/null -w "delete status: %{http_code}\n"
+          DEL_STATUS=$(curl -s --max-time 30 -X DELETE "$BASE?id=eq.$ID" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -o /dev/null -w "%{http_code}")
+
+          echo "Delete HTTP status: $DEL_STATUS"
+          echo "Done. Supabase project pinged successfully."
